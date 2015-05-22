@@ -1,0 +1,126 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+######by Heather Murray
+Wearable technologies are becoming a ubiquitous part of workout programs across the globe. By examining different parameters recorded by these technologies, it is possible to predict what kind of motion the user is performing. In order to do this, you can follow the proceeding steps. 
+
+It is dangerous to go alone. Take these libraries. 
+```{r load the libraries, message=FALSE}
+library(caret)
+require(dplyr)
+library(randomForest)
+library(rattle)
+library(rpart)
+```
+
+Now we can set the seed to make the random number generation reproducible
+```{r set seed}
+set.seed(007)
+```
+
+Now we'll tell the url opener where the datasets are.
+```{r define train and test datasets}
+train_Url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test_Url <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+```
+
+Let's open up our training and test sets 
+```{r training and testing}
+train_dataset <- read.csv(url(train_Url), na.strings=c("NA", "#DIV/0!", ""))
+test_dataset <- read.csv(url(test_Url), na.strings=c("NA", "#DIV/0!", ""))
+```
+
+To clean the datasets, we're going to remove the variable that have near-zero variance, in order to take away the possible predictors that don't predict the parameters we want. 
+```{r remove near zeros}
+training_nr_zero <- nearZeroVar(train_dataset, saveMetrics=FALSE)
+find_vars <- c(training_nr_zero)
+
+train_clean <- train_dataset[,-find_vars]
+train_clean <- train_clean[-1]
+```
+
+Next we'll remove the columns with too many NAs, to remove more data that isn't of use. When looking at the datasets, the distribution of NAs in the columns in binomial; some have a great deal, but others have zero, and no columns have just a few; it's either thousands, or none at all. We'll handle this by removing any columns with NAs. Ain't nobody got time for that. 
+
+```{r remove excess NAs}
+zero_sums <- colSums(is.na(train_clean))
+zero_sums <- as.data.frame(zero_sums)
+
+zero_subset <- subset(zero_sums, zero_sums == 0)
+zero_names <- c(rownames(zero_subset))
+
+train_dataset <- train_clean[zero_names]
+```
+
+Now we'll create a training and a test dataset from the training dataset. The training dataset will have 60% of the values, and the test set, 40.
+```{r create training and testing sets from training dataset}
+train_set <- createDataPartition(y=train_dataset$classe, times=1, p=.6, list=FALSE)
+training1 <- train_dataset[train_set,]
+
+testing1 <- train_dataset[-train_set,]
+
+
+predictor_names <- c(colnames(testing1))
+```
+
+And now we'll remove the columns we took out of the training set from the out of sample test set.
+```{r}
+test_cats <- colnames(test_dataset) %in%
+  predictor_names
+test_set <- test_dataset[test_cats]
+```
+
+In order to make randomForest play nice with the dataset, we have to coerce the data to have the same factor levels. To do this, we can rbind the two dataframes together, after specifying the classes to be the same. After that, we'll delete the second part, but the data will still have the same factor levels, which will let us carry on.
+```{r just let it happen}
+for (i in 1:length(test_set) ) {
+        for(j in 1:length(training1)) {
+        if( length( grep(names(training1[i]), names(test_set)[j]) ) ==1)  {
+            class(test_set[j]) <- class(training1[i])
+        }      
+    }      
+}
+
+test_set <- rbind(training1[2, -58] , test_set) 
+test_set <- test_set[-1,]
+```
+
+Now let's do an RPart decision tree to see if it makes us a nice model.
+```{r trial one}
+rpart_trial <- rpart(classe ~., data=training1, method="class")
+fancyRpartPlot(rpart_trial)
+```
+
+cool, now let's see the in sample prediction
+```{r}
+pred_rpart <- predict(rpart_trial, testing1, type="class")
+confusionMatrix(pred_rpart, testing1$classe )
+```
+Well that's not half bad, but I'm sure we can do better.
+
+To the random forest with 5-fold cross valiation!
+```{r}
+rf_trial <- randomForest(classe~., data=training1)
+rf_predict <- predict(rf_trial, testing1, type="class")
+confusionMatrix(rf_predict, testing1$classe)
+```
+
+Ok so .998 is pretty stellar. 
+Let's do the out of sample prediction
+```{r find out of sample error}
+predict_oos <- predict(rf_trial, test_set, type = "class")
+print(predict_oos)
+```
+
+Don't forget to generate the files!!
+```{r write the files}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("pml_problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predict_oos)
+```
+
